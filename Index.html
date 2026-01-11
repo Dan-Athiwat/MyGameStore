@@ -1,49 +1,73 @@
+const express = require('express');
+const multer = require('multer');
+const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+
+const app = express();
+const PORT = 3000;
+
+// --- ส่วนตั้งค่าการเก็บไฟล์ (Backend) ---
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+});
+const upload = multer({ storage: storage });
+
+app.use(cors());
+app.use(express.json());
+app.use('/uploads', express.static(uploadDir)); // เปิดให้คนอื่นโหลดไฟล์ได้
+
+// --- ข้อมูลจำลอง (เก็บในแรม ปิดโปรแกรมหาย) ---
+let games = [];
+let users = [];
+
+// --- ส่วน HTML (Frontend) ฝังอยู่ในนี้เลย ---
+// เราใช้ \${variable} เพื่อไม่ให้ตีกับตัวแปรของ Node.js
+const htmlContent = `
 <!DOCTYPE html>
 <html lang="th">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Game Store - Community</title>
+    <title>Game Store Community</title>
     <style>
         :root { --primary: #00A651; --bg: #202124; --card: #303134; --text: #fff; }
-        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); color: var(--text); }
+        body { margin: 0; font-family: sans-serif; background: var(--bg); color: var(--text); }
         
-        /* Login Screen */
+        /* Login */
         #login-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); display: flex; justify-content: center; align-items: center; z-index: 100; flex-direction: column; }
         input, textarea { padding: 10px; border-radius: 5px; border: 1px solid #555; background: #444; color: #fff; width: 300px; margin-bottom: 10px; }
         button { padding: 10px 20px; border-radius: 5px; border: none; background: var(--primary); color: white; cursor: pointer; font-weight: bold; }
         button:hover { opacity: 0.9; }
 
-        /* Navbar */
+        /* Nav */
         nav { background: #2c2c2c; padding: 15px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
         .logo { font-size: 1.5em; font-weight: bold; color: var(--primary); }
-        .search-container { position: relative; }
-        #search-box { width: 400px; margin: 0; }
-        #upload-btn { background: #fff; color: #000; margin-left: 20px; }
+        #search-box { width: 300px; margin: 0; }
         
-        /* Layouts */
+        /* Layout */
         .container { padding: 20px; max-width: 1200px; margin: auto; }
         .hidden { display: none !important; }
-
-        /* Game Grid */
         .game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; }
-        .game-card { background: var(--card); padding: 15px; border-radius: 10px; cursor: pointer; transition: transform 0.2s; }
+        .game-card { background: var(--card); padding: 15px; border-radius: 10px; cursor: pointer; transition: 0.2s; }
         .game-card:hover { transform: translateY(-5px); }
         .game-card img { width: 100%; height: 150px; object-fit: cover; border-radius: 8px; }
-        .game-title { font-weight: bold; margin-top: 10px; font-size: 1.1em; }
+        .game-title { font-weight: bold; margin-top: 10px; }
         .game-ver { font-size: 0.8em; color: #aaa; }
 
-        /* Upload Form */
+        /* Modal */
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 90; }
         .modal-content { background: var(--card); padding: 30px; border-radius: 10px; width: 500px; max-width: 90%; max-height: 90vh; overflow-y: auto; }
         .form-group { margin-bottom: 15px; display: flex; flex-direction: column; }
-        label { margin-bottom: 5px; font-weight: bold; }
 
-        /* Game Detail */
-        .detail-view { background: var(--card); padding: 30px; border-radius: 15px; }
-        .detail-header { display: flex; gap: 20px; align-items: flex-start; }
-        .detail-icon { width: 150px; height: 150px; object-fit: cover; border-radius: 20px; }
-        .btn-group { margin-top: 20px; display: flex; gap: 10px; }
+        /* Detail */
+        .detail-header { display: flex; gap: 20px; }
+        .detail-icon { width: 120px; height: 120px; object-fit: cover; border-radius: 20px; }
+        .btn-group { margin-top: 10px; display: flex; gap: 10px; }
         .btn-pc { background: #0078D7; }
         .btn-mobile { background: #3DDC84; color: #000; }
     </style>
@@ -52,46 +76,44 @@
 
     <div id="login-screen">
         <h2>เข้าสู่ระบบ Store</h2>
-        <input type="text" id="username-input" placeholder="ใส่ชื่อผู้ใช้ (ห้ามซ้ำกับคนอื่น)">
+        <input type="text" id="username-input" placeholder="ใส่ชื่อผู้ใช้ (ห้ามซ้ำ)">
         <button onclick="login()">ตกลง</button>
     </div>
 
     <div id="app" class="hidden">
         <nav>
             <div class="logo">GameStore</div>
-            <div class="search-container">
-                <input type="text" id="search-box" placeholder="ค้นหาเกม, แอป..." onkeyup="searchGame()">
+            <div>
+                <input type="text" id="search-box" placeholder="ค้นหา..." onkeyup="searchGame()">
             </div>
             <div>
-                <span id="user-display"></span>
-                <button id="upload-btn" onclick="openUpload()">อัปโหลดเกม/แอป</button>
+                <span id="user-display" style="margin-right:10px;"></span>
+                <button onclick="openUpload()">+ อัปโหลด</button>
             </div>
         </nav>
 
         <div class="container">
             <div id="home-view">
-                <h3>แอปและเกมแนะนำ</h3>
-                <div class="game-grid" id="game-list">
-                    </div>
+                <h3>เกมและแอปทั้งหมด</h3>
+                <div class="game-grid" id="game-list"></div>
             </div>
 
-            <div id="detail-view" class="hidden detail-view">
-                <button onclick="goHome()" style="background:transparent; color:#aaa; margin-bottom:10px;">&larr; กลับ</button>
+            <div id="detail-view" class="hidden" style="background:var(--card); padding:20px; border-radius:10px;">
+                <button onclick="goHome()" style="background:none; color:#aaa; margin-bottom:10px;">&larr; กลับ</button>
                 <div class="detail-header">
                     <img id="d-img" src="" class="detail-icon">
                     <div>
-                        <h1 id="d-name">ชื่อเกม</h1>
-                        <p id="d-ver" class="game-ver">V.1.0</p>
-                        <p>โดย: <span id="d-uploader"></span></p>
+                        <h1 id="d-name" style="margin:0;"></h1>
+                        <p id="d-ver" style="color:#aaa;"></p>
+                        <p>Uploader: <span id="d-uploader"></span></p>
                         <div class="btn-group">
-                            <a id="btn-dl-pc" class="hidden" download><button class="btn-pc">ดาวน์โหลด PC</button></a>
-                            <a id="btn-dl-mobile" class="hidden" download><button class="btn-mobile">ดาวน์โหลด Mobile</button></a>
+                            <a id="btn-dl-pc" class="hidden" download><button class="btn-pc">โหลด PC</button></a>
+                            <a id="btn-dl-mobile" class="hidden" download><button class="btn-mobile">โหลด Mobile</button></a>
                         </div>
                     </div>
                 </div>
-                <hr style="border-color: #555; margin: 20px 0;">
-                <h3>เกี่ยวกับเกมนี้</h3>
-                <p id="d-desc" style="white-space: pre-wrap; line-height: 1.6;"></p>
+                <hr style="border-color:#555;">
+                <p id="d-desc" style="white-space: pre-wrap;"></p>
             </div>
         </div>
     </div>
@@ -99,34 +121,16 @@
     <div id="upload-modal" class="modal hidden">
         <div class="modal-content">
             <h2>อัปโหลดผลงาน</h2>
-            <form id="upload-form" onsubmit="uploadGame(event)">
-                <div class="form-group">
-                    <label>ชื่อเกม/แอป</label>
-                    <input type="text" name="name" required>
-                </div>
-                <div class="form-group">
-                    <label>เวอร์ชั่น</label>
-                    <input type="text" name="version" placeholder="เช่น 1.0.5" required>
-                </div>
-                <div class="form-group">
-                    <label>คำอธิบาย</label>
-                    <textarea name="desc" rows="4" required></textarea>
-                </div>
-                <div class="form-group">
-                    <label>รูปโปรไฟล์เกม</label>
-                    <input type="file" name="image" accept="image/*" required>
-                </div>
-                <div class="form-group">
-                    <label>ไฟล์สำหรับ PC (.exe, .zip) - ไม่บังคับ</label>
-                    <input type="file" name="pcFile">
-                </div>
-                <div class="form-group">
-                    <label>ไฟล์สำหรับ Mobile (.apk) - ไม่บังคับ</label>
-                    <input type="file" name="mobileFile">
-                </div>
-                <div style="text-align: right;">
+            <form onsubmit="uploadGame(event)">
+                <div class="form-group"><label>ชื่อ</label><input type="text" name="name" required></div>
+                <div class="form-group"><label>เวอร์ชั่น</label><input type="text" name="version" required></div>
+                <div class="form-group"><label>รายละเอียด</label><textarea name="desc" rows="3" required></textarea></div>
+                <div class="form-group"><label>รูปปก</label><input type="file" name="image" accept="image/*" required></div>
+                <div class="form-group"><label>ไฟล์ PC</label><input type="file" name="pcFile"></div>
+                <div class="form-group"><label>ไฟล์ Mobile</label><input type="file" name="mobileFile"></div>
+                <div style="text-align:right;">
                     <button type="button" onclick="closeUpload()" style="background:#555;">ยกเลิก</button>
-                    <button type="submit">ตกลง (เผยแพร่)</button>
+                    <button type="submit">ยืนยัน</button>
                 </div>
             </form>
         </div>
@@ -134,22 +138,19 @@
 
     <script>
         let currentUser = "";
-        const API_URL = "http://localhost:3000/api"; // ถ้าเพื่อนเข้า ให้แก้ localhost เป็น IP เครื่องเรา
+        // ใช้ /api/ เพื่อให้ทำงานได้ทุก IP โดยอัตโนมัติ
+        const API_BASE = window.location.origin + '/api';
 
-        // --- Login Logic ---
         function login() {
             const username = document.getElementById('username-input').value.trim();
-            if(!username) return alert("กรุณาใส่ชื่อ");
-
-            fetch(API_URL + '/login', {
+            if(!username) return alert("ใส่ชื่อก่อน");
+            fetch(API_BASE + '/login', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if(data.error) return alert(data.error);
-                currentUser = data.username;
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({username})
+            }).then(r=>r.json()).then(d=>{
+                if(d.error) return alert(d.error);
+                currentUser = d.username;
                 document.getElementById('user-display').innerText = currentUser;
                 document.getElementById('login-screen').classList.add('hidden');
                 document.getElementById('app').classList.remove('hidden');
@@ -157,92 +158,100 @@
             });
         }
 
-        // --- Load Games ---
-        function loadGames(query = "") {
-            fetch(`${API_URL}/games?search=${query}`)
-            .then(res => res.json())
-            .then(games => {
+        function loadGames(q="") {
+            fetch(\`\${API_BASE}/games?search=\${q}\`)
+            .then(r=>r.json()).then(games=>{
                 const grid = document.getElementById('game-list');
                 grid.innerHTML = "";
-                games.forEach(game => {
-                    const card = document.createElement('div');
-                    card.className = "game-card";
-                    card.innerHTML = `
-                        <img src="${game.image ? 'http://localhost:3000' + game.image : 'https://via.placeholder.com/150'}" onerror="this.src='https://via.placeholder.com/150'">
-                        <div class="game-title">${game.name}</div>
-                        <div class="game-ver">Ver: ${game.version} | ${game.uploader}</div>
-                    `;
-                    card.onclick = () => openDetail(game);
-                    grid.appendChild(card);
+                games.forEach(g => {
+                    const div = document.createElement('div');
+                    div.className = "game-card";
+                    div.innerHTML = \`
+                        <img src="\${window.location.origin}\${g.image}">
+                        <div class="game-title">\${g.name}</div>
+                        <div class="game-ver">\${g.version}</div>
+                    \`;
+                    div.onclick = () => openDetail(g);
+                    grid.appendChild(div);
                 });
             });
         }
 
-        // --- Search ---
-        function searchGame() {
-            const txt = document.getElementById('search-box').value;
-            loadGames(txt);
-        }
-
-        // --- Upload Logic ---
+        function searchGame() { loadGames(document.getElementById('search-box').value); }
         function openUpload() { document.getElementById('upload-modal').classList.remove('hidden'); }
         function closeUpload() { document.getElementById('upload-modal').classList.add('hidden'); }
+        function goHome() { document.getElementById('detail-view').classList.add('hidden'); document.getElementById('home-view').classList.remove('hidden'); }
 
         function uploadGame(e) {
             e.preventDefault();
-            const formData = new FormData(e.target);
-            formData.append('uploader', currentUser);
-
-            fetch(API_URL + '/upload', {
-                method: 'POST',
-                body: formData
-            })
-            .then(res => res.json())
-            .then(data => {
-                if(data.status === "success") {
-                    alert("อัปโหลดเรียบร้อย!");
-                    closeUpload();
-                    e.target.reset();
-                    loadGames();
-                } else {
-                    alert("เกิดข้อผิดพลาด");
-                }
+            const fd = new FormData(e.target);
+            fd.append('uploader', currentUser);
+            fetch(API_BASE + '/upload', { method:'POST', body:fd })
+            .then(r=>r.json()).then(d=>{
+                if(d.status==='success') { alert('สำเร็จ'); closeUpload(); e.target.reset(); loadGames(); }
+                else alert('ผิดพลาด');
             });
         }
 
-        // --- Detail View ---
-        function openDetail(game) {
+        function openDetail(g) {
             document.getElementById('home-view').classList.add('hidden');
             document.getElementById('detail-view').classList.remove('hidden');
+            document.getElementById('d-name').innerText = g.name;
+            document.getElementById('d-ver').innerText = g.version;
+            document.getElementById('d-desc').innerText = g.desc;
+            document.getElementById('d-uploader').innerText = g.uploader;
+            document.getElementById('d-img').src = window.location.origin + g.image;
+            
+            const pc = document.getElementById('btn-dl-pc');
+            const mo = document.getElementById('btn-dl-mobile');
+            
+            if(g.pcFile) { pc.classList.remove('hidden'); pc.parentElement.href = window.location.origin + g.pcFile; }
+            else pc.classList.add('hidden');
 
-            document.getElementById('d-name').innerText = game.name;
-            document.getElementById('d-ver').innerText = `Version: ${game.version}`;
-            document.getElementById('d-desc').innerText = game.desc;
-            document.getElementById('d-uploader').innerText = game.uploader;
-            document.getElementById('d-img').src = 'http://localhost:3000' + game.image;
-
-            const btnPc = document.getElementById('btn-dl-pc');
-            const btnMob = document.getElementById('btn-dl-mobile');
-
-            if(game.pcFile) {
-                btnPc.classList.remove('hidden');
-                btnPc.parentElement.href = 'http://localhost:3000' + game.pcFile;
-            } else {
-                btnPc.classList.add('hidden');
-            }
-
-            if(game.mobileFile) {
-                btnMob.classList.remove('hidden');
-                btnMob.parentElement.href = 'http://localhost:3000' + game.mobileFile;
-            } else {
-                btnMob.classList.add('hidden');
-            }
-        }
-
-        function goHome() {
-            document.getElementById('detail-view').classList.add('hidden');
-            document.getElementById('home-view').classList.remove('hidden');
+            if(g.mobileFile) { mo.classList.remove('hidden'); mo.parentElement.href = window.location.origin + g.mobileFile; }
+            else mo.classList.add('hidden');
         }
     </script>
 </body>
 </html>
+`;
+
+// --- Routes (ส่วนเชื่อมต่อ) ---
+app.get('/', (req, res) => res.send(htmlContent));
+
+app.post('/api/login', (req, res) => {
+    const { username } = req.body;
+    if (!username) return res.status(400).json({ error: "ต้องใส่ชื่อ" });
+    if (!users.includes(username)) users.push(username);
+    res.json({ status: "ok", username });
+});
+
+app.post('/api/upload', upload.fields([{ name: 'pcFile' }, { name: 'mobileFile' }, { name: 'image' }]), (req, res) => {
+    const files = req.files;
+    const newGame = {
+        id: Date.now(),
+        name: req.body.name,
+        version: req.body.version,
+        desc: req.body.desc,
+        uploader: req.body.uploader,
+        image: files.image ? `/uploads/${files.image[0].filename}` : null,
+        pcFile: files.pcFile ? `/uploads/${files.pcFile[0].filename}` : null,
+        mobileFile: files.mobileFile ? `/uploads/${files.mobileFile[0].filename}` : null
+    };
+    games.push(newGame);
+    res.json({ status: "success", game: newGame });
+});
+
+app.get('/api/games', (req, res) => {
+    const { search } = req.query;
+    if (search) {
+        const filtered = games.filter(g => g.name.toLowerCase().includes(search.toLowerCase()));
+        return res.json(filtered);
+    }
+    res.json(games);
+});
+
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+    console.log(`คนอื่นเข้าได้ที่ http://[IP-ของเครื่องคุณ]:${PORT}`);
+});
